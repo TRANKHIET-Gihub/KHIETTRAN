@@ -1,7 +1,6 @@
 services:
   - type: web
     name: khiettran-ai-studio-api
-    type: web
     runtime: docker
     plan: free
     dockerfilePath: ./backend/Dockerfile
