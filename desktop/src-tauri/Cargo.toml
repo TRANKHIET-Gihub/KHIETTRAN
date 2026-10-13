@@ -1,0 +1,15 @@
+[package]
+name = "khiettran-ai-studio"
+version = "0.1.0"
+description = "KHIETTRAN AI STUDIO desktop photo editor"
+authors = ["KHIETTRAN"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
