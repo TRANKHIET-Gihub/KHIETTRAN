@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: khiettran-ai-studio-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: AI_PROVIDER
+        value: replicate
+      - key: REPLICATE_API_TOKEN
+        sync: false
+      - key: MAX_UPLOAD_MB
+        value: "5"
+      - key: API_CORS_ORIGINS
+        value: "tauri://localhost,http://tauri.localhost,http://localhost:1420,http://127.0.0.1:1420"
