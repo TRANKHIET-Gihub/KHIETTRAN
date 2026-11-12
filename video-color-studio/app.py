@@ -4,7 +4,7 @@ import cv2, numpy as np
 from PySide6.QtWidgets import QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QPushButton,QListWidget,QLabel,QFileDialog,QComboBox,QCheckBox,QDoubleSpinBox,QSpinBox,QGroupBox,QFormLayout,QProgressBar,QMessageBox,QAbstractItemView
 from PySide6.QtCore import QThread, Signal
 
-ROOT=Path(__file__).resolve().parent
+ROOT=Path(sys.executable).resolve().parent if getattr(sys,"frozen",False) else Path(__file__).resolve().parent
 
 def exe(name):
     p=ROOT/"runtime"/"ffmpeg"/(name+".exe")
@@ -52,8 +52,13 @@ def make_filter(a,m,lut):
         rs=warm-tint; bs=-warm-tint
         parts.append(f"colorbalance=rs={rs:.4f}:gs={tint:.4f}:bs={bs:.4f}:rm={rs*.7:.4f}:gm={tint*.7:.4f}:bm={bs*.7:.4f}")
     sh=float(np.clip(m["shadows"]/100,-.5,.5)); hi=float(np.clip(m["highlights"]/100,-.5,.5))
-    if abs(sh)>1e-3 or abs(hi)>1e-3:
-        parts.append("curves=all='0/0':'0.25/{:.4f}':'0.75/{:.4f}':'1/1'".format(np.clip(.25+sh*.18,0,1),np.clip(.75+hi*.18,0,1)))
+    black=float(np.clip(m["blacks"]/100,-0.25,0.25)); white=float(np.clip(m["whites"]/100,-0.25,0.25))
+    vib=float(np.clip(m["vibrance"]/100,-1,1))
+    if abs(vib)>1e-3: parts.append("vibrance=intensity={:.4f}".format(vib))
+    if any(abs(v)>1e-3 for v in (sh,hi,black,white)):
+        p0=float(np.clip(black*.20,0,.20)); p25=float(np.clip(.25+sh*.18,0,1))
+        p75=float(np.clip(.75+hi*.18,0,1)); p100=float(np.clip(1+white*.20,.80,1))
+        parts.append("curves=all='0/{:.4f} 0.25/{:.4f} 0.75/{:.4f} 1/{:.4f}'".format(p0,p25,p75,p100))
     if lut:
         parts.append("lut3d=file='"+str(lut).replace(chr(92),"/").replace("'","\\'")+"'")
     return ",".join(parts)
@@ -81,7 +86,7 @@ class Worker(QThread):
                 else:
                     enc="h264_nvenc" if use_nv else "libx264"
                 out=Path(self.settings["out"])/(src.stem+"_color.mp4"); out.parent.mkdir(parents=True,exist_ok=True)
-                cmd=[exe("ffmpeg"),"-y","-hide_banner","-i",str(src),"-vf",vf,"-c:v",enc,"-b:v",f'{self.settings["bitrate"]}M'," -preset" if False else "-preset","p5" if use_nv else "medium","-map","0:v:0"]
+                cmd=[exe("ffmpeg"),"-y","-hide_banner","-i",str(src),"-vf",vf,"-c:v",enc,"-b:v",f'{self.settings["bitrate"]}M',"-preset","p5" if use_nv else "medium","-map","0:v:0"]
                 if self.settings["audio"]: cmd += ["-map","0:a?","-c:a","aac","-b:a","320k"]
                 else: cmd += ["-an"]
                 cmd += ["-movflags","+faststart",str(out)]
@@ -115,7 +120,7 @@ class Main(QMainWindow):
 
         right=QVBoxLayout()
         g=QGroupBox("Color"); f=QFormLayout(g); self.c={}
-        specs=[("Exposure",-3,3,.1,0),("Contrast",.5,1.8,.01,1),("Highlights",-100,100,1,0),("Shadows",-100,100,1,0),("Temperature",-100,100,1,0),("Tint",-100,100,1,0),("Saturation",0,2,.01,1)]
+        specs=[("Exposure",-3,3,.1,0),("Contrast",.5,1.8,.01,1),("Highlights",-100,100,1,0),("Shadows",-100,100,1,0),("Whites",-100,100,1,0),("Blacks",-100,100,1,0),("Temperature",-100,100,1,0),("Tint",-100,100,1,0),("Vibrance",-100,100,1,0),("Saturation",0,2,.01,1)]
         for name,lo,hi,st,val in specs:
             w=QDoubleSpinBox(); w.setRange(lo,hi); w.setSingleStep(st); w.setValue(val); self.c[name]=w; f.addRow(name,w)
         right.addWidget(g)
@@ -154,7 +159,7 @@ class Main(QMainWindow):
         if not self.files: return QMessageBox.warning(self,"No source","Add at least one video.")
         m={k.lower().replace(" ","_"):v.value() for k,v in self.c.items()}
         settings={"resolution":self.res.currentText(),"codec":self.codec.currentText(),"bitrate":self.br.value(),"nvenc":self.nv.isChecked(),"audio":self.audio.isChecked(),"out":self.out.text()}
-        manual={"exposure":m["exposure"],"contrast":m["contrast"],"highlights":m["highlights"],"shadows":m["shadows"],"temperature":m["temperature"],"tint":m["tint"],"saturation":m["saturation"]}
+        manual={"exposure":m["exposure"],"contrast":m["contrast"],"highlights":m["highlights"],"shadows":m["shadows"],"whites":m["whites"],"blacks":m["blacks"],"temperature":m["temperature"],"tint":m["tint"],"vibrance":m["vibrance"],"saturation":m["saturation"]}
         self.worker=Worker(self.files,settings,manual,self.auto.isChecked(),self.lut)
         self.worker.row.connect(lambda i,s:self.list.item(i).setText(str(self.files[i])+" — "+s))
         self.worker.overall.connect(self.progress.setValue); self.worker.done.connect(self.finished)
