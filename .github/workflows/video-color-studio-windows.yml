@@ -49,23 +49,50 @@ jobs:
           Copy-Item runtime "dist\KHIETTRAN Video Color Studio\runtime" -Recurse -Force
           Compress-Archive -Path "dist\KHIETTRAN Video Color Studio" -DestinationPath "KHIETTRAN_Video_Color_Studio_Windows_x64.zip" -Force
 
-      - name: Smoke test packaged portable EXE (H.264, HEVC and audio)
+      - name: Inspect ZIP and smoke test packaged portable EXE (H.264, HEVC and audio)
         shell: pwsh
         run: |
-          $app = "dist\KHIETTRAN Video Color Studio\KHIETTRAN Video Color Studio.exe"
-          if (!(Test-Path $app)) { throw "Portable EXE not found: $app" }
+          $ErrorActionPreference = "Stop"
+          $zip = "KHIETTRAN_Video_Color_Studio_Windows_x64.zip"
+          if (!(Test-Path $zip)) { throw "Portable ZIP not found: $zip" }
+          $extract = Join-Path $env:RUNNER_TEMP "khiettran-portable-test"
+          Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -Path $zip -DestinationPath $extract -Force
+          $root = Join-Path $extract "KHIETTRAN Video Color Studio"
+          $required = @(
+            (Join-Path $root "KHIETTRAN Video Color Studio.exe"),
+            (Join-Path $root "runtime\ffmpeg\ffmpeg.exe"),
+            (Join-Path $root "runtime\ffmpeg\ffprobe.exe")
+          )
+          foreach ($file in $required) {
+            if (!(Test-Path $file -PathType Leaf)) { throw "ZIP is missing required file: $file" }
+            Write-Host "ZIP CHECK PASS: $file"
+          }
+
+          $app = Join-Path $root "KHIETTRAN Video Color Studio.exe"
           $env:KHIETTRAN_SELFTEST_LOG = Join-Path $PWD "self-test.log"
-          Remove-Item $env:KHIETTRAN_SELFTEST_LOG -ErrorAction SilentlyContinue
+          Remove-Item $env:KHIETTRAN_SELFTEST_LOG -Force -ErrorAction SilentlyContinue
+          Write-Host "Starting packaged EXE self-test..."
           $proc = Start-Process -FilePath $app -ArgumentList "--self-test" -Wait -PassThru -NoNewWindow
-          if (Test-Path $env:KHIETTRAN_SELFTEST_LOG) {
+          if (Test-Path $env:KHIETTRAN_SELFTEST_LOG -PathType Leaf) {
+            Write-Host "----- SELF-TEST DIAGNOSTIC LOG -----"
             Get-Content $env:KHIETTRAN_SELFTEST_LOG
+            Write-Host "----- END SELF-TEST DIAGNOSTIC LOG -----"
           } else {
-            Write-Error "Self-test did not create its diagnostic log."
+            Write-Error "Self-test did not create diagnostic log: $env:KHIETTRAN_SELFTEST_LOG"
           }
           if ($proc.ExitCode -ne 0) { throw "Packaged EXE self-test failed with exit code $($proc.ExitCode)" }
+          if (!(Test-Path $env:KHIETTRAN_SELFTEST_LOG) -or !(Select-String -Path $env:KHIETTRAN_SELFTEST_LOG -Pattern "^PASS: H.264, HEVC and audio streams validated\." -Quiet)) {
+            throw "Self-test did not write the expected PASS marker."
+          }
 
       - name: Upload Windows artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: KHIETTRAN-Video-Color-Studio-Windows-x64
-          path: video-color-studio/KHIETTRAN_Video_Color_Studio_Windows_x64.zip
+          path: |
+            video-color-studio/KHIETTRAN_Video_Color_Studio_Windows_x64.zip
+            video-color-studio/self-test.log
+          if-no-files-found: warn
+          retention-days: 14
