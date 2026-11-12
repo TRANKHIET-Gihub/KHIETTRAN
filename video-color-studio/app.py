@@ -169,38 +169,124 @@ class Main(QMainWindow):
     def finished(self):
         self.start.setEnabled(True); self.stop.setEnabled(False); self.status.setText("Batch export finished."); QMessageBox.information(self,"Complete","Batch export finished and outputs were validated.")
 
-def run_self_test():
+def run_self_test(log):
     import tempfile
     from pathlib import Path
+
+    ffmpeg_path = Path(exe("ffmpeg"))
+    ffprobe_path = Path(exe("ffprobe"))
+    if getattr(sys, "frozen", False):
+        for tool_path in (ffmpeg_path, ffprobe_path):
+            if not tool_path.is_file():
+                raise RuntimeError(f"Bundled executable missing: {tool_path}")
+    log(f"FFmpeg path: {ffmpeg_path}")
+    log(f"FFprobe path: {ffprobe_path}")
+
+    version = subprocess.run(
+        [str(ffmpeg_path), "-hide_banner", "-version"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
+    )
+    if version.returncode:
+        raise RuntimeError("FFmpeg version check failed: " + version.stderr[-2000:])
+    log("FFmpeg version check: PASS")
+
+    enc = subprocess.run(
+        [str(ffmpeg_path), "-hide_banner", "-encoders"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
+    )
+    if enc.returncode:
+        raise RuntimeError("FFmpeg encoder listing failed: " + enc.stderr[-2000:])
+    for name in ("libx264", "libx265"):
+        if name not in enc.stdout:
+            raise RuntimeError(f"Required FFmpeg encoder unavailable: {name}")
+    log("Required encoders libx264/libx265: PASS")
+
     with tempfile.TemporaryDirectory(prefix="khiettran_selftest_") as td:
-        td=Path(td); source=td/"source.mp4"
-        cmd=[exe("ffmpeg"),"-y","-hide_banner","-f","lavfi","-i","testsrc2=size=640x360:rate=25","-f","lavfi","-i","sine=frequency=1000:sample_rate=48000","-t","2","-c:v","libx264","-pix_fmt","yuv420p","-c:a","aac",str(source)]
-        p=subprocess.run(cmd,capture_output=True,text=True,encoding="utf-8",errors="replace")
-        if p.returncode: raise RuntimeError("Synthetic source creation failed: "+p.stderr[-1500:])
-        manual={"exposure":0.1,"contrast":1.05,"highlights":5,"shadows":5,"whites":5,"blacks":-5,"temperature":2,"tint":1,"vibrance":10,"saturation":1.05}
-        vf=make_filter((0,1,0,0,1),manual,None)
-        for codec,encoder in (("h264","libx264"),("hevc","libx265")):
-            out=td/(codec+".mp4")
-            p=subprocess.run([exe("ffmpeg"),"-y","-hide_banner","-i",str(source),"-vf",vf,"-c:v",encoder,"-preset","ultrafast","-pix_fmt","yuv420p","-map","0:v:0","-map","0:a?","-c:a","aac","-b:a","128k",str(out)],capture_output=True,text=True,encoding="utf-8",errors="replace")
-            if p.returncode: raise RuntimeError(codec+" encode failed: "+p.stderr[-1500:])
-            streams=probe(out).get("streams",[])
-            kinds={x.get("codec_type") for x in streams}
-            if "video" not in kinds or "audio" not in kinds: raise RuntimeError(codec+" output missing video/audio stream")
+        td = Path(td)
+        source = td / "source.mp4"
+        cmd = [
+            str(ffmpeg_path), "-y", "-hide_banner",
+            "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25",
+            "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=48000",
+            "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", str(source)
+        ]
+        log("Creating synthetic test video with audio...")
+        p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=120)
+        if p.returncode:
+            raise RuntimeError("Synthetic source creation failed: " + p.stderr[-3000:])
+        if not source.is_file() or source.stat().st_size == 0:
+            raise RuntimeError("Synthetic source was not created.")
+
+        manual = {
+            "exposure": 0.1, "contrast": 1.05, "highlights": 5, "shadows": 5,
+            "whites": 5, "blacks": -5, "temperature": 2, "tint": 1,
+            "vibrance": 10, "saturation": 1.05
+        }
+        vf = make_filter((0, 1, 0, 0, 1), manual, None)
+        log("Filter chain: " + vf)
+
+        for codec, encoder in (("h264", "libx264"), ("hevc", "libx265")):
+            out = td / (codec + ".mp4")
+            log(f"Encoding {codec.upper()} test output...")
+            cmd = [
+                str(ffmpeg_path), "-y", "-hide_banner", "-i", str(source),
+                "-vf", vf, "-c:v", encoder, "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p", "-map", "0:v:0", "-map", "0:a?",
+                "-c:a", "aac", "-b:a", "128k", str(out)
+            ]
+            p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=180)
+            if p.returncode:
+                raise RuntimeError(f"{codec.upper()} encode failed (exit {p.returncode}): " + p.stderr[-4000:])
+            if not out.is_file() or out.stat().st_size == 0:
+                raise RuntimeError(f"{codec.upper()} output file missing or empty.")
+            log(f"{codec.upper()} encode: PASS ({out.stat().st_size} bytes)")
+
+            streams = probe(out).get("streams", [])
+            kinds = {x.get("codec_type") for x in streams}
+            if "video" not in kinds or "audio" not in kinds:
+                raise RuntimeError(f"{codec.upper()} output missing video/audio stream: {streams}")
+            log(f"{codec.upper()} video/audio stream validation: PASS")
     return True
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     if "--self-test" in sys.argv:
+        import os
+        import traceback
+        log_path = Path(os.environ.get(
+            "KHIETTRAN_SELFTEST_LOG",
+            str(Path.home() / "KHIETTRAN-self-test.log")
+        ))
         try:
-            run_self_test()
-            log_path=Path(__import__("os").environ.get("KHIETTRAN_SELFTEST_LOG",str(Path.home()/"KHIETTRAN-self-test.log")))
-            log_path.write_text("PASS: H.264, HEVC and audio streams validated.",encoding="utf-8")
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            def write_log(message):
+                with log_path.open("a", encoding="utf-8") as stream:
+                    stream.write(str(message) + "\n")
+                    stream.flush()
+            log_path.write_text("KHIETTRAN PORTABLE SELF-TEST START\n", encoding="utf-8")
+            run_self_test(write_log)
+            write_log("PASS: H.264, HEVC and audio streams validated.")
             sys.exit(0)
-        except Exception as exc:
-            import traceback, os
-            detail=traceback.format_exc()
-            log_path=Path(os.environ.get("KHIETTRAN_SELFTEST_LOG",str(Path.home()/"KHIETTRAN-self-test.log")))
-            log_path.write_text(detail,encoding="utf-8")
+        except BaseException:
+            detail = traceback.format_exc()
+            try:
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                with log_path.open("a", encoding="utf-8") as stream:
+                    stream.write("\nSELF-TEST FAILURE\n")
+                    stream.write(detail)
+                    stream.flush()
+            except Exception:
+                pass
             if sys.stderr is not None:
-                print(detail,file=sys.stderr)
+                try:
+                    print(detail, file=sys.stderr, flush=True)
+                except Exception:
+                    pass
             os._exit(1)
-    app=QApplication(sys.argv); w=Main(); w.show(); sys.exit(app.exec())
+    app = QApplication(sys.argv)
+    w = Main()
+    w.show()
+    sys.exit(app.exec())
