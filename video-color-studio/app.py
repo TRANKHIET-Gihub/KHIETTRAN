@@ -192,8 +192,15 @@ if __name__=="__main__":
     if "--self-test" in sys.argv:
         try:
             run_self_test()
+            log_path=Path(__import__("os").environ.get("KHIETTRAN_SELFTEST_LOG",str(Path.home()/"KHIETTRAN-self-test.log")))
+            log_path.write_text("PASS: H.264, HEVC and audio streams validated.",encoding="utf-8")
             sys.exit(0)
         except Exception as exc:
-            print(str(exc),file=sys.stderr)
-            sys.exit(1)
+            import traceback, os
+            detail=traceback.format_exc()
+            log_path=Path(os.environ.get("KHIETTRAN_SELFTEST_LOG",str(Path.home()/"KHIETTRAN-self-test.log")))
+            log_path.write_text(detail,encoding="utf-8")
+            if sys.stderr is not None:
+                print(detail,file=sys.stderr)
+            os._exit(1)
     app=QApplication(sys.argv); w=Main(); w.show(); sys.exit(app.exec())
