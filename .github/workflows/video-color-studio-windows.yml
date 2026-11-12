@@ -49,6 +49,14 @@ jobs:
           Copy-Item runtime "dist\KHIETTRAN Video Color Studio\runtime" -Recurse -Force
           Compress-Archive -Path "dist\KHIETTRAN Video Color Studio" -DestinationPath "KHIETTRAN_Video_Color_Studio_Windows_x64.zip" -Force
 
+      - name: Smoke test packaged portable EXE (H.264, HEVC and audio)
+        shell: pwsh
+        run: |
+          $app = "dist\KHIETTRAN Video Color Studio\KHIETTRAN Video Color Studio.exe"
+          if (!(Test-Path $app)) { throw "Portable EXE not found: $app" }
+          & $app --self-test
+          if ($LASTEXITCODE -ne 0) { throw "Packaged EXE self-test failed with exit code $LASTEXITCODE" }
+
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
