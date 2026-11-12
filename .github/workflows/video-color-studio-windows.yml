@@ -54,8 +54,15 @@ jobs:
         run: |
           $app = "dist\KHIETTRAN Video Color Studio\KHIETTRAN Video Color Studio.exe"
           if (!(Test-Path $app)) { throw "Portable EXE not found: $app" }
-          & $app --self-test
-          if ($LASTEXITCODE -ne 0) { throw "Packaged EXE self-test failed with exit code $LASTEXITCODE" }
+          $env:KHIETTRAN_SELFTEST_LOG = Join-Path $PWD "self-test.log"
+          Remove-Item $env:KHIETTRAN_SELFTEST_LOG -ErrorAction SilentlyContinue
+          $proc = Start-Process -FilePath $app -ArgumentList "--self-test" -Wait -PassThru -NoNewWindow
+          if (Test-Path $env:KHIETTRAN_SELFTEST_LOG) {
+            Get-Content $env:KHIETTRAN_SELFTEST_LOG
+          } else {
+            Write-Error "Self-test did not create its diagnostic log."
+          }
+          if ($proc.ExitCode -ne 0) { throw "Packaged EXE self-test failed with exit code $($proc.ExitCode)" }
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
