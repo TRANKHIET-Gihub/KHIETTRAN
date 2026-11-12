@@ -169,5 +169,31 @@ class Main(QMainWindow):
     def finished(self):
         self.start.setEnabled(True); self.stop.setEnabled(False); self.status.setText("Batch export finished."); QMessageBox.information(self,"Complete","Batch export finished and outputs were validated.")
 
+def run_self_test():
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory(prefix="khiettran_selftest_") as td:
+        td=Path(td); source=td/"source.mp4"
+        cmd=[exe("ffmpeg"),"-y","-hide_banner","-f","lavfi","-i","testsrc2=size=640x360:rate=25","-f","lavfi","-i","sine=frequency=1000:sample_rate=48000","-t","2","-c:v","libx264","-pix_fmt","yuv420p","-c:a","aac",str(source)]
+        p=subprocess.run(cmd,capture_output=True,text=True,encoding="utf-8",errors="replace")
+        if p.returncode: raise RuntimeError("Synthetic source creation failed: "+p.stderr[-1500:])
+        manual={"exposure":0.1,"contrast":1.05,"highlights":5,"shadows":5,"whites":5,"blacks":-5,"temperature":2,"tint":1,"vibrance":10,"saturation":1.05}
+        vf=make_filter((0,1,0,0,1),manual,None)
+        for codec,encoder in (("h264","libx264"),("hevc","libx265")):
+            out=td/(codec+".mp4")
+            p=subprocess.run([exe("ffmpeg"),"-y","-hide_banner","-i",str(source),"-vf",vf,"-c:v",encoder,"-preset","ultrafast","-pix_fmt","yuv420p","-map","0:v:0","-map","0:a?","-c:a","aac","-b:a","128k",str(out)],capture_output=True,text=True,encoding="utf-8",errors="replace")
+            if p.returncode: raise RuntimeError(codec+" encode failed: "+p.stderr[-1500:])
+            streams=probe(out).get("streams",[])
+            kinds={x.get("codec_type") for x in streams}
+            if "video" not in kinds or "audio" not in kinds: raise RuntimeError(codec+" output missing video/audio stream")
+    return True
+
 if __name__=="__main__":
+    if "--self-test" in sys.argv:
+        try:
+            run_self_test()
+            sys.exit(0)
+        except Exception as exc:
+            print(str(exc),file=sys.stderr)
+            sys.exit(1)
     app=QApplication(sys.argv); w=Main(); w.show(); sys.exit(app.exec())
