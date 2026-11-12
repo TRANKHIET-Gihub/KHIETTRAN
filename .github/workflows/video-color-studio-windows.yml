@@ -1,0 +1,56 @@
+name: Build KHIETTRAN Video Color Studio
+
+on:
+  push:
+    branches:
+      - video-color-studio-release
+  workflow_dispatch:
+
+jobs:
+  windows-build:
+    runs-on: windows-2022
+    defaults:
+      run:
+        working-directory: video-color-studio
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Download FFmpeg
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force runtime\ffmpeg | Out-Null
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_extract -Force
+          $bin = Get-ChildItem ffmpeg_extract -Directory | Select-Object -First 1
+          Copy-Item "$($bin.FullName)\bin\ffmpeg.exe" runtime\ffmpeg\ffmpeg.exe -Force
+          Copy-Item "$($bin.FullName)\bin\ffprobe.exe" runtime\ffmpeg\ffprobe.exe -Force
+
+      - name: Compile Python
+        run: python -m compileall app.py
+
+      - name: Build portable EXE
+        run: pyinstaller --noconfirm --clean --windowed --name "KHIETTRAN Video Color Studio" --collect-all PySide6 app.py
+
+      - name: Package portable ZIP
+        shell: pwsh
+        run: |
+          Copy-Item runtime "dist\KHIETTRAN Video Color Studio\runtime" -Recurse -Force
+          Compress-Archive -Path "dist\KHIETTRAN Video Color Studio" -DestinationPath "KHIETTRAN_Video_Color_Studio_Windows_x64.zip" -Force
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KHIETTRAN-Video-Color-Studio-Windows-x64
+          path: video-color-studio/KHIETTRAN_Video_Color_Studio_Windows_x64.zip
